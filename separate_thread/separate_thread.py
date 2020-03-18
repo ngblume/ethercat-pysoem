@@ -110,9 +110,17 @@ class ThreadingExample:
         while not self._pd_thread_stop_event.is_set():
             self._master.send_processdata()
             self._actual_wkc = self._master.receive_processdata(10000)
+            
+            # Testing Toggle Bit an der EL3144
+            # https://infosys.beckhoff.de/index.php?content=../content/1031/el31xx/1710364299.html&id=
+            # el3144_ch_all_current_as_bytes = self._master.slaves[3].input
+            # el3144_ch_all_current_as_int16_struct = struct.unpack('8H', el3144_ch_all_current_as_bytes)
+            # el3144_ch_1_state_as_int16 = el3144_ch_all_current_as_int16_struct[0]
+            # print('{:#06x}'.format(el3144_ch_1_state_as_int16))
+            
             if not self._actual_wkc == self._master.expected_wkc:
                 print('Incorrect WKC')
-            time.sleep(0.01)
+            time.sleep(0.005)
 
     # Continuously running loop toggling the DOs until interrupted with Ctrl + C
     def _pdo_update_loop(self):
@@ -125,52 +133,99 @@ class ThreadingExample:
         # Try the permanent loop
         try:
             while 1:
+                # Struct erforderlich, da Bytes erwartet werden und keine Ints oder ähnliches
                 print('Setting:')
+                if toggle:
+                    # Signed 16bit (Struct: shirt - "h"): -32768 .. 32767
+                    # 1.0V: f3276.7 = d3277 = 0x0CCD
+                    # 1.5V: f4915.05 = d4915 = 0x1333
+                    # 2.0V: f6553,4 = d6553 = 0x1999
+                    # 2.5V: f8191.75 = d8192 = 0x2000
+                    # 3.0V: f9830,1 = d9830 = 0x2666
+                    # 3.5V: f11468,45 = d11468 = 0x2CCC
+                    # 4.0V: f13106,8 = d13106 = 0x3332
+                    # 4.5V: f14745,15 = d14745 = 0x3999
+                    # 7.5V: f24575.25 = d24575 = 0x5FFF
+                    self._master.slaves[1].output = struct.pack('8h', 0x0CCD, 0x1999, 0x2666, 0x3332, 0x0CCD, 0x1999, 0x2666, 0x3332)
+                    print('EL4008: 1V, 2V, 3V, 4V, 1V, 2V, 3V, 4V')
+                else:
+                    self._master.slaves[1].output = struct.pack('8h', 0x1333, 0x2000, 0x2CCC, 0x3999, 0x1333, 0x2000, 0x2CCC, 0x3999)
+                    print('EL4008: 1.5V, 2.5V, 3.5V, 4.5V, 1.5V, 2.5V, 3.5V, 4.5V')
+                print('**********')
+                if toggle:
+                    # Signed 16bit (Struct: shirt - "h"): -32768 .. 32767
+                    # 4 mA: f6553,4 = d6553 = 0x1999
+                    # 8 mA: f13106,8 = d13106 = 0x3332
+                    # 12 mA: f19660,2 = d19660 = 0x4CCC
+                    # 16 mA: f26213,6 = d26214 = 0x6666
+                    # 20 mA: f32767 = d32767 = 0x7FFF
+                    self._master.slaves[2].output = struct.pack('4h', 0x1999, 0x3332, 0x4CCC, 0x6666)
+                    print('EL4114: 4mA, 8mA, 12mA, 16mA')
+                else:
+                    self._master.slaves[2].output = struct.pack('4h', 0x3332, 0x1999, 0x6666, 0x4CCC)
+                    print('EL4114: 8mA, 4mA, 16mA, 12mA')
+                print('**********')
+                if toggle:
+                    self._master.slaves[4].output = struct.pack('B', 0x05)
+                    print('EL2624: 0x05 = Relais 1 + 3')
+                else:
+                    self._master.slaves[4].output = struct.pack('B', 0x0A)
+                    print('EL2624: 0x0A = Relais 2 + 4')
+                print('**********')
                 # Toggle outputs between 1-3-5-7-9-11-13-15 and 2-4-6-8-10-12-14-16
                 if toggle:
                     self._master.slaves[5].output = struct.pack('H', 0xAAAA)
-                    print('EL2872: 0xAAAA = all left => 0x8100')
-                    self._master.slaves[4].output = struct.pack('B', 0x05)
+                    print('EL2872: 0xAAAA = all right')
                 else:
                     self._master.slaves[5].output = struct.pack('H', 0x5555)
-                    print('EL2872: 5555 = all right => 0x0042')
-                    self._master.slaves[4].output = struct.pack('B', 0x0A)
+                    print('EL2872: 0x5555 = all left')
 
-                print('=====')
+                print('=================================================')
+                # Wait for propagation of physical signals (especially DO to DI)
+                time.sleep(0.01)
                 print('Reading:')
 
                 # Read from INPUTs
+                # EL3144 - 4 Channels, je 16 Bit Analog Value und 16 Bit Status
+                # 16 Bit Status: erstes Bit toggelt zwischen jedem gelesenen Analog-Wert (also zwischen 0x8000 und 0x0000)
                 print('EL3144: {}'.format(self._master.slaves[3].input.hex()))
                 el3144_ch_all_current_as_bytes = self._master.slaves[3].input
-                el3144_ch_all_current_as_int16_struct = struct.unpack('8H', el3144_ch_all_current_as_bytes)
+                el3144_ch_all_current_as_int16_struct = struct.unpack('8h', el3144_ch_all_current_as_bytes)
 
-                el3144_ch_1_current_as_int16 = el3144_ch_all_current_as_int16_struct[1]
                 el3144_ch_1_state_as_int16 = el3144_ch_all_current_as_int16_struct[0]
-                el3144_ch_2_current_as_int16 = el3144_ch_all_current_as_int16_struct[3]
+                el3144_ch_1_current_as_int16 = el3144_ch_all_current_as_int16_struct[1]
+                
                 el3144_ch_2_state_as_int16 = el3144_ch_all_current_as_int16_struct[2]
-                el3144_ch_3_current_as_int16 = el3144_ch_all_current_as_int16_struct[5]
+                el3144_ch_2_current_as_int16 = el3144_ch_all_current_as_int16_struct[3]
+                
                 el3144_ch_3_state_as_int16 = el3144_ch_all_current_as_int16_struct[4]
-                el3144_ch_4_current_as_int16 = el3144_ch_all_current_as_int16_struct[7]
+                el3144_ch_3_current_as_int16 = el3144_ch_all_current_as_int16_struct[5]
+                
                 el3144_ch_4_state_as_int16 = el3144_ch_all_current_as_int16_struct[6]
+                el3144_ch_4_current_as_int16 = el3144_ch_all_current_as_int16_struct[7]
                 
                 el3144_ch_1_current = el3144_ch_1_current_as_int16 * 10 / 0x8000
                 el3144_ch_2_current = el3144_ch_2_current_as_int16 * 10 / 0x8000
                 el3144_ch_3_current = el3144_ch_3_current_as_int16 * 10 / 0x8000
                 el3144_ch_4_current = el3144_ch_4_current_as_int16 * 10 / 0x8000
 
-                print('EL3144: Ch 1 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_1_current_as_int16, el3144_ch_1_current, el3144_ch_1_state_as_int16))
-                print('EL3144: Ch 2 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_2_current_as_int16, el3144_ch_2_current, el3144_ch_2_state_as_int16))
-                print('EL3144: Ch 3 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_3_current_as_int16, el3144_ch_3_current, el3144_ch_3_state_as_int16))
-                print('EL3144: Ch 4 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_4_current_as_int16, el3144_ch_4_current, el3144_ch_4_state_as_int16))
+                print('EL3144: Ch 1 PDO: {:#06x}; Current: {:.6}; State: {:#06x}'.format(el3144_ch_1_current_as_int16, el3144_ch_1_current, el3144_ch_1_state_as_int16))
+                print('EL3144: Ch 2 PDO: {:#06x}; Current: {:.6}; State: {:#06x}'.format(el3144_ch_2_current_as_int16, el3144_ch_2_current, el3144_ch_2_state_as_int16))
+                print('EL3144: Ch 3 PDO: {:#06x}; Current: {:.6}; State: {:#06x}'.format(el3144_ch_3_current_as_int16, el3144_ch_3_current, el3144_ch_3_state_as_int16))
+                print('EL3144: Ch 4 PDO: {:#06x}; Current: {:.6}; State: {:#06x}'.format(el3144_ch_4_current_as_int16, el3144_ch_4_current, el3144_ch_4_state_as_int16))
 
-                print('EL1872: {}'.format(self._master.slaves[6].input.hex()))
+                print('**********')
 
-                print('==========')
+                el1872_ch_all_as_bytes = self._master.slaves[6].input
+                el1872_ch_all_as_int16 = struct.unpack('H', el1872_ch_all_as_bytes)[0]
+                print('EL1872: {:#06x} - {:#018b}'.format(el1872_ch_all_as_int16, el1872_ch_all_as_int16))
+
+                print('===========================================================================================')
 
                 # Invert value of toggle
                 toggle ^= True
                 # Wait 1 sec
-                time.sleep(1)
+                time.sleep(3)
 
         except KeyboardInterrupt:
             # Ctrl-C to abort handling
