@@ -13,8 +13,8 @@ class ThreadingExample:
 
     BECKHOFF_VENDOR_ID = 0x0002
     EK1100_PRODUCT_CODE = 0x044c2c52
-    # EL4008_PRODUCT_CODE = 0x
-    # EL4114_PRODUCT_CODE = 0x
+    EL4008_PRODUCT_CODE = 0x0FA83052
+    EL4114_PRODUCT_CODE = 0x10123052
     EL3144_PRODUCT_CODE = 0x0C483052
     EL2624_PRODUCT_CODE = 0x0A403052
     EL2872_PRODUCT_CODE = 0x0B383052
@@ -31,17 +31,19 @@ class ThreadingExample:
         self._master.do_check_state = False
         SlaveSet = namedtuple('SlaveSet', 'name product_code config_func')
         self._expected_slave_layout = {0: SlaveSet('EK1100', self.EK1100_PRODUCT_CODE, None),
-                                       1: SlaveSet('EL3144', self.EL3144_PRODUCT_CODE, None),
-                                       2: SlaveSet('EL2624', self.EL2624_PRODUCT_CODE, None),
-                                       3: SlaveSet('EL2872', self.EL2872_PRODUCT_CODE, self.el2872_setup),
-                                       4: SlaveSet('EL1872', self.EL1872_PRODUCT_CODE, None)}
+                                       1: SlaveSet('EL4008', self.EL4008_PRODUCT_CODE, None),
+                                       2: SlaveSet('EL4114', self.EL4114_PRODUCT_CODE, None),
+                                       3: SlaveSet('EL3144', self.EL3144_PRODUCT_CODE, None),
+                                       4: SlaveSet('EL2624', self.EL2624_PRODUCT_CODE, None),
+                                       5: SlaveSet('EL2872', self.EL2872_PRODUCT_CODE, self.el2872_setup),
+                                       6: SlaveSet('EL1872', self.EL1872_PRODUCT_CODE, None)}
 
     # Setup function for EL2872
     def el2872_setup(self, slave_pos):
         # Obtain relevant slave object from master
         slave = self._master.slaves[slave_pos]
 
-        # Set DC sync
+        # Set DC sync - Use / Purpose ??
         slave.dc_sync(1, 10000000)
 
     # Static method to check state of slave (will be executed in separate thread)
@@ -119,16 +121,51 @@ class ThreadingExample:
 
         # Initialize toggle variable
         toggle = True
+
+        # Try the permanent loop
         try:
             while 1:
+                print('Setting:')
                 # Toggle outputs between 1-3-5-7-9-11-13-15 and 2-4-6-8-10-12-14-16
                 if toggle:
-                    self._master.slaves[3].output = struct.pack('H', 0xAAAA)
+                    self._master.slaves[5].output = struct.pack('H', 0xAAAA)
+                    print('EL2872: 0xAAAA = all left => 0x8100')
+                    self._master.slaves[4].output = struct.pack('B', 0x05)
                 else:
-                    self._master.slaves[3].output = struct.pack('H', 0x5555)
-                
+                    self._master.slaves[5].output = struct.pack('H', 0x5555)
+                    print('EL2872: 5555 = all right => 0x0042')
+                    self._master.slaves[4].output = struct.pack('B', 0x0A)
+
+                print('=====')
+                print('Reading:')
+
                 # Read from INPUTs
-                print(self._master.slaves[4].input.hex())
+                print('EL3144: {}'.format(self._master.slaves[3].input.hex()))
+                el3144_ch_all_current_as_bytes = self._master.slaves[3].input
+                el3144_ch_all_current_as_int16_struct = struct.unpack('8H', el3144_ch_all_current_as_bytes)
+
+                el3144_ch_1_current_as_int16 = el3144_ch_all_current_as_int16_struct[1]
+                el3144_ch_1_state_as_int16 = el3144_ch_all_current_as_int16_struct[0]
+                el3144_ch_2_current_as_int16 = el3144_ch_all_current_as_int16_struct[3]
+                el3144_ch_2_state_as_int16 = el3144_ch_all_current_as_int16_struct[2]
+                el3144_ch_3_current_as_int16 = el3144_ch_all_current_as_int16_struct[5]
+                el3144_ch_3_state_as_int16 = el3144_ch_all_current_as_int16_struct[4]
+                el3144_ch_4_current_as_int16 = el3144_ch_all_current_as_int16_struct[7]
+                el3144_ch_4_state_as_int16 = el3144_ch_all_current_as_int16_struct[6]
+                
+                el3144_ch_1_current = el3144_ch_1_current_as_int16 * 10 / 0x8000
+                el3144_ch_2_current = el3144_ch_2_current_as_int16 * 10 / 0x8000
+                el3144_ch_3_current = el3144_ch_3_current_as_int16 * 10 / 0x8000
+                el3144_ch_4_current = el3144_ch_4_current_as_int16 * 10 / 0x8000
+
+                print('EL3144: Ch 1 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_1_current_as_int16, el3144_ch_1_current, el3144_ch_1_state_as_int16))
+                print('EL3144: Ch 2 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_2_current_as_int16, el3144_ch_2_current, el3144_ch_2_state_as_int16))
+                print('EL3144: Ch 3 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_3_current_as_int16, el3144_ch_3_current, el3144_ch_3_state_as_int16))
+                print('EL3144: Ch 4 PDO: {:#06x}; Current: {:.4}; State: {:#06x}'.format(el3144_ch_4_current_as_int16, el3144_ch_4_current, el3144_ch_4_state_as_int16))
+
+                print('EL1872: {}'.format(self._master.slaves[6].input.hex()))
+
+                print('==========')
 
                 # Invert value of toggle
                 toggle ^= True
@@ -137,7 +174,8 @@ class ThreadingExample:
 
         except KeyboardInterrupt:
             # Ctrl-C to abort handling
-            print('stopped')
+            print('PDO_Update_Loop stopped')
+            print('===========================================================================================')
 
     # Run method of class > called from main()
     def run(self):
@@ -146,7 +184,7 @@ class ThreadingExample:
 
         # Start EtherCAT MASTER
         self._master.open(self._ifname)
-        print("EtherCAT master created and started...")
+        print("EtherCAT master created and started ...")
         print('===========================================================================================')
 
         # Do Config_Init and exit, if not successful
@@ -205,7 +243,7 @@ class ThreadingExample:
                 print('===========================================================================================')
                 break
 
-        # If system reached OP_STATE, start PDO_Updte_Loop
+        # If system reached OP_STATE, start PDO_Update_Loop
         if all_slaves_reached_op_state:
             self._pdo_update_loop()
 
@@ -230,6 +268,8 @@ class ThreadingExample:
         
         # Stop EtherCAT MASTER
         self._master.close()
+        print("EtherCAT master stopped and closed ...")
+        print('===========================================================================================')
 
         if not all_slaves_reached_op_state:
             raise ThreadingExampleError('Not all slaves reached OP state')
